@@ -10,6 +10,8 @@
 #include "params.h"
 #include "voronoi.h"
 #include "stopwatch.h"
+#undef min
+#undef max
 
 void get_bbox(const std::vector<float>& vertices, float& xmin, float& ymin, float& zmin, float& xmax, float& ymax, float& zmax) {
     int nb_v = vertices.size() / 3;
@@ -204,7 +206,7 @@ int main(int argc, char** argv) {
     std::vector<float> vertices;
     std::vector<int> indices;
 
-    if (!load_tet(argv[1], vertices, indices))
+    if (!load_tet(argv[1], vertices, indices, false))
     {
         std::cerr << argv[1] << ": could not load file" << std::endl;
         return 1;
@@ -213,11 +215,12 @@ int main(int argc, char** argv) {
     int n_site;
     bool site_is_transposed;
     std::vector<float> site;
+    // just load xyz file, without any modification to the xyz coordinates
     load_xyz_file(site_is_transposed, site, n_site, argv[2]);
 
     if (5 == argc)
         compute_clipped_voro_diagram_GPU(vertices, indices, site, n_site, site_is_transposed, atoi(argv[3]), atoi(argv[4]));
-    else
+    else // MuGdxy : Here
         compute_clipped_voro_diagram_GPU(vertices, indices, site, n_site, site_is_transposed, atoi(argv[3]));
 
     drop_xyz_file(site_is_transposed, site, n_site, "out.xyz");

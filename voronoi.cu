@@ -819,7 +819,7 @@ void show_status_stats(std::vector<Status> &stat) {
 
 void cuda_check_error() {
     cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) { fprintf(stderr, "Failed (1) (error code %s)!\n", cudaGetErrorString(err)); exit(EXIT_FAILURE); }
+    if (err != cudaSuccess) { fprintf(stderr, "Failed (1) (error code %s)!\n", cudaGetErrorString(err)); std::abort(); }
 }
 
 void compute_tet_knn_dev(
@@ -993,7 +993,7 @@ void compute_clipped_voro_diagram_GPU(
         double start_time = 0.0, stop_time = 0.0;
         start_time = sw.now();
         { // GPU KNN
-            if (site_is_transposed)
+            if (site_is_transposed) // MuGdxy: Here
             {
                 // allocate memory for site and site knn
                 cudaMallocPitch((void**)& site_knn_dev, &site_knn_pitch_in_bytes, n_site * sizeof(int), _K_ + 1);
@@ -1007,6 +1007,7 @@ void compute_clipped_voro_diagram_GPU(
                 
                 site_pitch = site_pitch_in_bytes / sizeof(float);
 
+                // MuGdxy: KNN Here 
                 knn_cuda_global_dev(site_transposed_dev, n_site, site_pitch, site_transposed_dev, n_site, site_pitch, 3, _K_ + 1, site_knn_dev, site_knn_pitch);
                 cuda_check_error();
             }
@@ -1046,7 +1047,7 @@ void compute_clipped_voro_diagram_GPU(
             cudaEventCreate(&stop);
             cudaEventRecord(start);
 
-            if (site_is_transposed)
+            if (site_is_transposed) // MuGdxy: Here
                 clipped_voro_cell_test_GPU_param_tet<<<n_tet * tet_k / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE>>>(
                     site_transposed_dev, n_site, site_pitch,
                     site_knn_dev, site_knn_pitch,
@@ -1066,23 +1067,29 @@ void compute_clipped_voro_diagram_GPU(
                     gpu_stat.gpu_data, voronoi_cells_dev,
                     cell_bary_sum_dev, cell_bary_sum_pitch, cell_vol_dev
                 );
+            cudaDeviceSynchronize();
             cuda_check_error();
 
             cudaEventRecord(stop);
+            cuda_check_error();
             cudaEventSynchronize(start);
+            cuda_check_error();
             cudaEventSynchronize(stop);
+            cuda_check_error();
 
             stop_time = sw.now(); // Clip tet
             record << stop_time - start_time << ", ";
 
             start_time = sw.now();
             cudaEventRecord(start);
+            cuda_check_error();
 
             {
                 if (site_is_transposed)
                     cudaMemset2D(cell_bary_sum_dev, cell_bary_sum_pitch_in_bytes, 0, n_site * sizeof(float), 3);
                 else
                     cudaMemset(cell_bary_sum_dev, 0, 3 * n_site * sizeof(float));
+                cuda_check_error();
                 cudaMemset(cell_vol_dev, 0, n_site * sizeof(float));
                 cuda_check_error();
             }
