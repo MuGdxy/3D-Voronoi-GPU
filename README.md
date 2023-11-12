@@ -57,6 +57,14 @@ If you find this work is useful for your research, please cite our [paper](https
 }
 ```
 
-## Acknowledgement
+## Acknowledgment
 
 We thank [Ray et al.](https://dl.acm.org/doi/10.1145/3272127.3275092) for sharing their code.
+
+## Additional
+
+This version is modified by [MuGdxy](https://github.com/MuGdxy)
+
+1. We added some tool scripts e.g. [to normalize a tetrahedra mesh manually](./data/scripts)
+2. We added some visualization tools (with Houdini)
+

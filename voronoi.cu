@@ -10,6 +10,8 @@
 #include "knearests.h"
 #include "voronoi.h"
 #include "extern/kNN-CUDA/knncuda.h"
+#undef max
+#undef min
 
 __device__ float4 minus4(float4 A, float4 B) {
     return make_float4(A.x-B.x, A.y-B.y, A.z-B.z, A.w-B.w);
@@ -932,7 +934,8 @@ void compute_clipped_voro_diagram_GPU(
 {
     cudaSetDevice(0); // specify a device to be used for GPU computation
 
-    int n_vert = vertices.size() / 3, n_tet = (indices.size() >> 2);
+    int n_vert = vertices.size() / 3;
+    int n_tet = indices.size() / 4;
     int tet_k = preferred_tet_k ? preferred_tet_k : max(10 * (int)ceil(8.0 * log10(7.0 * n_site / n_tet + 1.0)), 20);
 
     std::vector<Status> stat(n_tet * tet_k, security_radius_not_reached);
@@ -997,24 +1000,31 @@ void compute_clipped_voro_diagram_GPU(
             {
                 // allocate memory for site and site knn
                 cudaMallocPitch((void**)& site_knn_dev, &site_knn_pitch_in_bytes, n_site * sizeof(int), _K_ + 1);
+                cudaDeviceSynchronize();
+                cuda_check_error();
+
                 cudaMallocPitch((void**)& site_transposed_dev, &site_pitch_in_bytes, n_site * sizeof(float), 3);
+                cudaDeviceSynchronize();
                 cuda_check_error();
                 site_knn_pitch = site_knn_pitch_in_bytes / sizeof(int);
 
                 // copy sites to device
                 cudaMemcpy2D(site_transposed_dev, site_pitch_in_bytes, site.data(), n_site * sizeof(float), n_site * sizeof(float), 3, cudaMemcpyHostToDevice);
+                cudaDeviceSynchronize();
                 cuda_check_error();
                 
                 site_pitch = site_pitch_in_bytes / sizeof(float);
 
                 // MuGdxy: KNN Here 
                 knn_cuda_global_dev(site_transposed_dev, n_site, site_pitch, site_transposed_dev, n_site, site_pitch, 3, _K_ + 1, site_knn_dev, site_knn_pitch);
+                cudaDeviceSynchronize();
                 cuda_check_error();
             }
             else
             {
                 kn = kn_prepare((float3*)site.data(), n_site);
                 cudaMemcpy(site.data(), kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
+                cudaDeviceSynchronize();
                 cuda_check_error();
                 kn_solve(kn);
             }
@@ -1025,6 +1035,7 @@ void compute_clipped_voro_diagram_GPU(
                 compute_tet_knn_dev(vert_dev, n_vert, vert_pitch, idx_dev, n_tet, idx_pitch, site_transposed_dev, n_site, site_pitch, tet_knn_dev, tet_knn_pitch, tet_k);
             else
                 compute_tet_knn_dev(vert_dev, n_vert, vert_pitch, idx_dev, n_tet, idx_pitch, (float*)kn->d_stored_points, n_site, site_pitch, tet_knn_dev, tet_knn_pitch, tet_k);
+            cudaDeviceSynchronize();
             cuda_check_error();
         }
 
@@ -1038,6 +1049,7 @@ void compute_clipped_voro_diagram_GPU(
             else
                 cudaMemset(cell_bary_sum_dev, 0, 3 * n_site * sizeof(float));
             cudaMemset(cell_vol_dev, 0, n_site * sizeof(float));
+            cudaDeviceSynchronize();
             cuda_check_error();
         }
         
@@ -1047,8 +1059,10 @@ void compute_clipped_voro_diagram_GPU(
             cudaEventCreate(&stop);
             cudaEventRecord(start);
 
-            if (site_is_transposed) // MuGdxy: Here
-                clipped_voro_cell_test_GPU_param_tet<<<n_tet * tet_k / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE>>>(
+            if (site_is_transposed)
+            {
+                // MuGdxy: Here
+                clipped_voro_cell_test_GPU_param_tet << <n_tet * tet_k / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE >> > (
                     site_transposed_dev, n_site, site_pitch,
                     site_knn_dev, site_knn_pitch,
                     vert_dev, n_vert, vert_pitch,
@@ -1056,9 +1070,13 @@ void compute_clipped_voro_diagram_GPU(
                     tet_knn_dev, tet_knn_pitch, tet_k,
                     gpu_stat.gpu_data, voronoi_cells_dev,
                     cell_bary_sum_dev, cell_bary_sum_pitch, cell_vol_dev
-                );
+                    );
+                cudaDeviceSynchronize();
+                cuda_check_error();
+            }
             else
-                clipped_voro_cell_test_GPU_param_tet<<<n_tet * tet_k / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE>>>(
+            {
+                clipped_voro_cell_test_GPU_param_tet << <n_tet * tet_k / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE >> > (
                     (float*)kn->d_stored_points, n_site, site_pitch,
                     (int*)kn->d_knearests, site_knn_pitch,
                     vert_dev, n_vert, vert_pitch,
@@ -1066,9 +1084,10 @@ void compute_clipped_voro_diagram_GPU(
                     tet_knn_dev, tet_knn_pitch, tet_k,
                     gpu_stat.gpu_data, voronoi_cells_dev,
                     cell_bary_sum_dev, cell_bary_sum_pitch, cell_vol_dev
-                );
-            cudaDeviceSynchronize();
-            cuda_check_error();
+                    );
+                cudaDeviceSynchronize();
+                cuda_check_error();
+            }
 
             cudaEventRecord(stop);
             cuda_check_error();
@@ -1089,8 +1108,10 @@ void compute_clipped_voro_diagram_GPU(
                     cudaMemset2D(cell_bary_sum_dev, cell_bary_sum_pitch_in_bytes, 0, n_site * sizeof(float), 3);
                 else
                     cudaMemset(cell_bary_sum_dev, 0, 3 * n_site * sizeof(float));
+                cudaDeviceSynchronize();
                 cuda_check_error();
                 cudaMemset(cell_vol_dev, 0, n_site * sizeof(float));
+                cudaDeviceSynchronize();
                 cuda_check_error();
             }
 
@@ -1104,6 +1125,7 @@ void compute_clipped_voro_diagram_GPU(
                     (float*)kn->d_stored_points, n_site, site_pitch,
                     (int*)kn->d_knearests, site_knn_pitch, voronoi_cells_dev
                 );
+            cudaDeviceSynchronize();
             cuda_check_error();
 
             clipped_voro_cell_test_GPU_param<<<n_tet * tet_k / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE>>>(
@@ -1113,6 +1135,7 @@ void compute_clipped_voro_diagram_GPU(
                 gpu_stat.gpu_data, voronoi_cells_dev,
                 cell_bary_sum_dev, cell_bary_sum_pitch, cell_vol_dev
             );
+            cudaDeviceSynchronize();
             cuda_check_error();
 
             cudaEventRecord(stop);
@@ -1129,6 +1152,7 @@ void compute_clipped_voro_diagram_GPU(
                 compute_new_site<<<n_site / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE>>>(site_transposed_dev, n_site, site_pitch, cell_bary_sum_dev, cell_bary_sum_pitch, cell_vol_dev);
             else
                 compute_new_site<<<n_site / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE>>>((float*)kn->d_stored_points, n_site, site_pitch, cell_bary_sum_dev, cell_bary_sum_pitch, cell_vol_dev);
+            cudaDeviceSynchronize();
             cuda_check_error();
         
             cudaEventRecord(stop);
@@ -1157,6 +1181,8 @@ void compute_clipped_voro_diagram_GPU(
                 cudaMemcpy(site.data(), (float*)kn->d_stored_points, 3 * n_site * sizeof(float), cudaMemcpyDeviceToHost);
                 kn_free(&kn);
             }
+            cudaDeviceSynchronize();
+            cuda_check_error();
 
             cudaEventRecord(stop);
             cudaEventSynchronize(start);
